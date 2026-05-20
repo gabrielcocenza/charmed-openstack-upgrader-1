@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import jubilant
@@ -1227,3 +1228,69 @@ async def test_coumodel_get_application_status_failed(mocked_model):
         match="Cannot find 'app-not-exists' in model 'mocked-model'.",
     ):
         await model.get_application_status(app_name="app-not-exists")
+
+
+def test_coumodel_run_on_all_machines(mocked_model):
+    """Test Model run_on_all_machines."""
+    exec_output = json.dumps(
+        {
+            "0": {
+                "id": "1",
+                "status": "completed",
+                "results": {"return-code": 0, "stdout": "output from machine 0", "stderr": ""},
+            },
+            "1": {
+                "id": "2",
+                "status": "completed",
+                "results": {"return-code": 0, "stdout": "output from machine 1", "stderr": ""},
+            },
+        }
+    )
+    model = juju_utils.Model("test-model")
+    with patch("cou.utils.juju_utils.jubilant.Juju") as mock_juju_class:
+        mock_juju_instance = mock_juju_class.return_value
+        mock_juju_instance.cli.return_value = exec_output
+        results = model.run_on_all_machines("apt-cache policy")
+
+    assert len(results) == 2
+    assert results["0"].stdout == "output from machine 0"
+    assert results["1"].stdout == "output from machine 1"
+    assert results["0"].success
+    assert results["1"].success
+
+
+def test_coumodel_run_on_all_machines_cli_error(mocked_model):
+    """Test Model run_on_all_machines when juju CLI fails."""
+    import jubilant
+
+    model = juju_utils.Model("test-model")
+    with patch("cou.utils.juju_utils.jubilant.Juju") as mock_juju_class:
+        mock_juju_instance = mock_juju_class.return_value
+        mock_juju_instance.cli.side_effect = jubilant.CLIError(1, ["juju", "exec"], "out", "err")
+        results = model.run_on_all_machines("apt-cache policy")
+
+    assert results == {}
+
+
+def test_coumodel_run_on_all_machines_with_timeout(mocked_model):
+    """Test Model run_on_all_machines with timeout parameter."""
+    exec_output = json.dumps(
+        {
+            "0": {
+                "id": "1",
+                "status": "completed",
+                "results": {"return-code": 0, "stdout": "output", "stderr": ""},
+            },
+        }
+    )
+    model = juju_utils.Model("test-model")
+    with patch("cou.utils.juju_utils.jubilant.Juju") as mock_juju_class:
+        mock_juju_instance = mock_juju_class.return_value
+        mock_juju_instance.cli.return_value = exec_output
+        results = model.run_on_all_machines("apt-cache policy", timeout=60)
+
+    mock_juju_instance.cli.assert_called_once()
+    call_args = mock_juju_instance.cli.call_args[0]
+    assert "--wait" in call_args
+    assert "60s" in call_args
+    assert len(results) == 1

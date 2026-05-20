@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -649,6 +650,38 @@ class Model(JubilantModelMixin):
             raise CommandRunFailed(cmd=command, result=results)
 
         return results
+
+    def run_on_all_machines(
+        self, command: str, timeout: Optional[int] = None
+    ) -> dict[str, jubilant.Task]:
+        """Run a command on all machines in the model using juju exec --all.
+
+        :param command: Command to execute on all machines
+        :type command: str
+        :param timeout: How long in seconds to wait for command to complete
+        :type timeout: Optional[int]
+        :returns: Dictionary mapping machine identifiers to jubilant Task results
+        :rtype: dict[str, jubilant.Task]
+        """
+        logger.debug("Running '%s' on all machines", command)
+        _juju = jubilant.Juju(model=self._juju_data.current_model())
+
+        cli_args = ["exec", "--format", "json", "--all"]
+        if timeout is not None:
+            cli_args.extend(["--wait", f"{timeout}s"])
+        cli_args.extend(["--", command])
+
+        try:
+            stdout = _juju.cli(*cli_args)
+        except jubilant.CLIError as exc:
+            logger.warning("Failed to run '%s' on all machines: %s", command, exc)
+            return {}
+
+        results: dict[str, Any] = json.loads(stdout) if stdout.strip() else {}
+        return {
+            machine_id: jubilant.Task._from_dict(task_dict)
+            for machine_id, task_dict in results.items()
+        }
 
     @retry(no_retry_exceptions=(ApplicationNotFound,))
     async def set_application_config(self, name: str, configuration: dict[str, str]) -> None:

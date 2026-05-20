@@ -508,6 +508,7 @@ def test_planstatus_warnings_property():
 @patch("cou.steps.plan._verify_model_idle")
 @patch("cou.steps.plan._verify_osd_noout_unset")
 @patch("cou.steps.plan._verify_vault_is_unsealed")
+@patch("cou.steps.plan._verify_apt_sources")
 @patch("cou.steps.plan._verify_hypervisors_cli_input")
 @patch("cou.steps.plan._verify_supported_series")
 @patch("cou.steps.plan._verify_highest_release_achieved")
@@ -519,6 +520,7 @@ async def test_pre_plan_sanity_checks(
     mock_verify_highest_release_achieved,
     mock_verify_supported_series,
     mock_verify_hypervisors_cli_input,
+    mock_verify_apt_sources,
     mock_verify_vault_is_unsealed,
     mock_verify_osd_noout_unset,
     mock_verify_model_idle,
@@ -535,6 +537,7 @@ async def test_pre_plan_sanity_checks(
     mock_verify_nova_cloud_controller_scheduler_default_filters.assert_called_once_with(
         cli_args, mock_analysis_result
     )
+    mock_verify_apt_sources.assert_called_once_with(cli_args, mock_analysis_result)
     mock_verify_vault_is_unsealed.assert_awaited_once_with(mock_analysis_result)
     mock_verify_osd_noout_unset.assert_awaited_once_with(mock_analysis_result)
     mock_verify_model_idle.assert_awaited_once_with(mock_analysis_result)
@@ -1793,7 +1796,75 @@ async def test_post_upgrade_sanity_checks_no_exception(
     """Test post_upgrade_sanity_checks without exception."""
     mock_ceph.assert_osd_noout_state = AsyncMock()
     await cou_plan.post_upgrade_sanity_checks(mock_analysis)
+
     mock_print_and_debug.assert_not_called()
+
+
+@patch("cou.steps.plan.PlanStatus")
+@patch("cou.steps.analyze.Analysis")
+@patch("cou.steps.plan.verify_apt_sources")
+def test_verify_apt_sources_unexpected_no_force(
+    mock_verify_apt_sources, mock_analysis, mock_plan_status
+):
+    """Test _verify_apt_sources with unexpected sources and no --force flag."""
+    mock_verify_apt_sources.return_value = {
+        "0": {"http://ppa.launchpad.net/some-user/ppa/ubuntu"},
+    }
+    mock_args = MagicMock(spec_set=CLIargs(command="plan"))()
+    mock_args.force = False
+    cou_plan._verify_apt_sources(mock_args, mock_analysis)
+    mock_plan_status.add_message.assert_called_once()
+    call_args = mock_plan_status.add_message.call_args
+    assert "Unexpected APT sources" in call_args.args[0]
+    assert "Machine 0" in call_args.args[0]
+    assert "--force" in call_args.args[0]
+    assert call_args.args[1] == cou_plan.MessageType.ERROR
+
+
+@patch("cou.steps.plan.PlanStatus")
+@patch("cou.steps.analyze.Analysis")
+@patch("cou.steps.plan.verify_apt_sources")
+def test_verify_apt_sources_unexpected_with_force(
+    mock_verify_apt_sources, mock_analysis, mock_plan_status
+):
+    """Test _verify_apt_sources with unexpected sources and --force flag."""
+    mock_verify_apt_sources.return_value = {
+        "0": {"http://ppa.launchpad.net/some-user/ppa/ubuntu"},
+    }
+    mock_args = MagicMock(spec_set=CLIargs(command="plan"))()
+    mock_args.force = True
+    cou_plan._verify_apt_sources(mock_args, mock_analysis)
+    mock_plan_status.add_message.assert_called_once()
+    call_args = mock_plan_status.add_message.call_args
+    assert "Unexpected APT sources" in call_args.args[0]
+    assert call_args.args[1] == cou_plan.MessageType.WARNING
+
+
+@patch("cou.steps.plan.PlanStatus")
+@patch("cou.steps.analyze.Analysis")
+@patch("cou.steps.plan.verify_apt_sources")
+def test_verify_apt_sources_clean(mock_verify_apt_sources, mock_analysis, mock_plan_status):
+    """Test _verify_apt_sources with no unexpected sources."""
+    mock_verify_apt_sources.return_value = {}
+    mock_args = MagicMock(spec_set=CLIargs(command="plan"))()
+    cou_plan._verify_apt_sources(mock_args, mock_analysis)
+    mock_plan_status.add_message.assert_not_called()
+
+
+@patch("cou.steps.plan.PlanStatus")
+@patch("cou.steps.analyze.Analysis")
+@patch("cou.steps.plan.verify_apt_sources")
+def test_verify_apt_sources_exception_handled(
+    mock_verify_apt_sources, mock_analysis, mock_plan_status
+):
+    """Test _verify_apt_sources handles exceptions gracefully."""
+    mock_verify_apt_sources.side_effect = Exception("connection failed")
+    mock_args = MagicMock(spec_set=CLIargs(command="plan"))()
+    cou_plan._verify_apt_sources(mock_args, mock_analysis)
+    mock_plan_status.add_message.assert_called_once()
+    call_args = mock_plan_status.add_message.call_args
+    assert "Failed to verify APT sources" in call_args.args[0]
+    assert call_args.args[1] == cou_plan.MessageType.WARNING
 
 
 @patch("cou.steps.analyze.Analysis")

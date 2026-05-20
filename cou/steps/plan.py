@@ -52,6 +52,7 @@ from cou.exceptions import (
 )
 from cou.steps import PostUpgradeStep, PreUpgradeStep, UpgradePlan, ceph
 from cou.steps.analyze import Analysis
+from cou.steps.apt_sources import verify_apt_sources
 from cou.steps.backup import backup
 from cou.steps.hypervisor import HypervisorUpgradePlanner
 from cou.steps.nova_cloud_controller import archive, purge
@@ -108,6 +109,7 @@ async def verify_cloud(analysis_result: Analysis, args: CLIargs) -> None:
     :param args: CLI arguments
     :type args: CLIargs
     """
+    _verify_apt_sources(args, analysis_result)
     _verify_supported_series(analysis_result)
     _verify_highest_release_achieved(analysis_result)
     _verify_data_plane_ready_to_upgrade(args, analysis_result)
@@ -405,6 +407,52 @@ async def _verify_model_idle(analysis_result: Analysis) -> None:
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
         PlanStatus.add_message(f"Model is not idle: {str(e)}", MessageType.ERROR)
+
+
+def _verify_apt_sources(args: CLIargs, analysis_result: Analysis) -> None:
+    """Verify APT sources on all machines are expected.
+
+    Check that all machines in the model only have expected APT sources configured
+    (standard Ubuntu archives, Ubuntu Cloud Archive, or Landscape mirrors).
+    If unexpected sources are found and --force is not set, an error message
+    will be added to `PlanStatus`. If --force is set, a warning message will be added instead.
+
+    :param args: CLI arguments
+    :type args: CLIargs
+    :param analysis_result: Analysis result
+    :type analysis_result: Analysis
+    """
+    try:
+        unexpected_by_machine = verify_apt_sources(analysis_result.model)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        logger.warning("Failed to verify APT sources: %s", e)
+        PlanStatus.add_message(
+            f"Failed to verify APT sources on machines: {e}",
+            MessageType.ERROR,
+        )
+        return
+
+    if not unexpected_by_machine:
+        logger.info("APT sources found are as expected.")
+        return
+
+    details = "\n".join(
+        f"  - Machine {machine_id}: {', '.join(sorted(uris))}"
+        for machine_id, uris in sorted(unexpected_by_machine.items())
+    )
+    message = (
+        "Unexpected APT sources found on machines. This may cause issues during the upgrade. "
+        "Only standard Ubuntu, Ubuntu Cloud Archive, and Landscape sources are expected.\n"
+        f"{details}"
+    )
+
+    if args.force:
+        PlanStatus.add_message(message, MessageType.WARNING)
+    else:
+        PlanStatus.add_message(
+            f"{message}\nUse --force to override this check.",
+            MessageType.ERROR,
+        )
 
 
 def _is_control_plane_upgraded(analysis_result: Analysis) -> bool:
