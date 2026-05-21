@@ -13,6 +13,8 @@
 # limitations under the License.
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cou.steps.apt_sources import (
     _get_allowed_host_patterns,
     find_unexpected_uris,
@@ -376,7 +378,9 @@ class TestVerifyAptSources:
         assert "https://packages.example.com/stable" in result["0"]
 
     def test_machine_failure_handled(self):
-        """Test that machine command failures are handled gracefully."""
+        """Test that machine command failures raise CommandRunFailed."""
+        from cou.exceptions import CommandRunFailed
+
         model = MagicMock()
         model.run_on_all_machines.return_value = {
             "0": self._make_task(stdout=APT_POLICY_CLEAN),
@@ -384,8 +388,8 @@ class TestVerifyAptSources:
                 stdout="", stderr="connection refused", return_code=1, status="failed"
             ),
         }
-        result = verify_apt_sources(model)
-        assert result == {}
+        with pytest.raises(CommandRunFailed):
+            verify_apt_sources(model)
 
     def test_no_results(self):
         """Test handling when no results are returned."""

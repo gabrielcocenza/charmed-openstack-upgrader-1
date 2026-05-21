@@ -1263,13 +1263,14 @@ def test_coumodel_run_on_all_machines_cli_error(mocked_model):
     """Test Model run_on_all_machines when juju CLI fails."""
     import jubilant
 
+    from cou.exceptions import CommandRunFailed
+
     model = juju_utils.Model("test-model")
     with patch("cou.utils.juju_utils.jubilant.Juju") as mock_juju_class:
         mock_juju_instance = mock_juju_class.return_value
         mock_juju_instance.cli.side_effect = jubilant.CLIError(1, ["juju", "exec"], "out", "err")
-        results = model.run_on_all_machines("apt-cache policy")
-
-    assert results == {}
+        with pytest.raises(CommandRunFailed):
+            model.run_on_all_machines("apt-cache policy")
 
 
 def test_coumodel_run_on_all_machines_with_timeout(mocked_model):

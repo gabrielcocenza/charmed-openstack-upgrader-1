@@ -409,6 +409,25 @@ async def _verify_model_idle(analysis_result: Analysis) -> None:
         PlanStatus.add_message(f"Model is not idle: {str(e)}", MessageType.ERROR)
 
 
+def _report_verification_result(message: str, force: bool) -> None:
+    """Report verification failure, adding the appropriate message to PlanStatus.
+
+    If --force is set the message is logged as a warning, otherwise it is logged
+    as an error with a hint about using --force to override.
+
+    :param message: Message to report
+    :type message: str
+    :param force: If True, add as WARNING; if False, add as ERROR
+    :type force: bool
+    """
+    if force:
+        PlanStatus.add_message(message, MessageType.WARNING)
+    else:
+        PlanStatus.add_message(
+            f"{message}\nUse --force to override this check.", MessageType.ERROR
+        )
+
+
 def _verify_apt_sources(args: CLIargs, analysis_result: Analysis) -> None:
     """Verify APT sources on all machines are expected.
 
@@ -425,15 +444,15 @@ def _verify_apt_sources(args: CLIargs, analysis_result: Analysis) -> None:
     try:
         unexpected_by_machine = verify_apt_sources(analysis_result.model)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        logger.warning("Failed to verify APT sources: %s", e)
-        PlanStatus.add_message(
-            f"Failed to verify APT sources on machines: {e}",
-            MessageType.ERROR,
-        )
+        message = f"Failed to verify APT sources on machines: {str(e)}"
+        logger.error(message)
+        _report_verification_result(message, args.force)
         return
 
     if not unexpected_by_machine:
-        logger.info("APT sources found are as expected.")
+        logger.info(
+            "Successfully verified APT sources on all machines, no unexpected sources found."
+        )
         return
 
     details = "\n".join(
@@ -445,14 +464,7 @@ def _verify_apt_sources(args: CLIargs, analysis_result: Analysis) -> None:
         "Only standard Ubuntu, Ubuntu Cloud Archive, and Landscape sources are expected.\n"
         f"{details}"
     )
-
-    if args.force:
-        PlanStatus.add_message(message, MessageType.WARNING)
-    else:
-        PlanStatus.add_message(
-            f"{message}\nUse --force to override this check.",
-            MessageType.ERROR,
-        )
+    _report_verification_result(message, args.force)
 
 
 def _is_control_plane_upgraded(analysis_result: Analysis) -> bool:

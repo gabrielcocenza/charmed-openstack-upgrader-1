@@ -17,6 +17,7 @@ import os
 import re
 from urllib.parse import urlparse
 
+from cou.exceptions import CommandRunFailed
 from cou.utils.juju_utils import Model
 
 logger = logging.getLogger(__name__)
@@ -115,20 +116,23 @@ def verify_apt_sources(model: Model) -> dict[str, set[str]]:
     """
     results = model.run_on_all_machines(APT_CACHE_POLICY_CMD, 30)
 
-    if not results:
-        logger.warning("No results from running '%s' on machines.", APT_CACHE_POLICY_CMD)
-        return {}
-
     unexpected_by_machine: dict[str, set[str]] = {}
     for machine_id, task in results.items():
         if not task.success:
-            logger.warning(
+            logger.error(
                 "Failed to run '%s' on machine %s: %s",
                 APT_CACHE_POLICY_CMD,
                 machine_id,
                 task.stderr or task.message,
             )
-            continue
+            raise CommandRunFailed(
+                cmd=APT_CACHE_POLICY_CMD,
+                result={
+                    "return-code": task.return_code,
+                    "stdout": task.stdout,
+                    "stderr": task.stderr,
+                },
+            )
 
         uris = parse_apt_policy_uris(task.stdout)
         unexpected = find_unexpected_uris(uris)

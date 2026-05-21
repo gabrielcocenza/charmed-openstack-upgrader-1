@@ -1857,14 +1857,33 @@ def test_verify_apt_sources_clean(mock_verify_apt_sources, mock_analysis, mock_p
 def test_verify_apt_sources_exception_handled(
     mock_verify_apt_sources, mock_analysis, mock_plan_status
 ):
-    """Test _verify_apt_sources handles exceptions gracefully."""
+    """Test _verify_apt_sources handles exceptions gracefully with --force set."""
     mock_verify_apt_sources.side_effect = Exception("connection failed")
     mock_args = MagicMock(spec_set=CLIargs(command="plan"))()
+    mock_args.force = True
     cou_plan._verify_apt_sources(mock_args, mock_analysis)
     mock_plan_status.add_message.assert_called_once()
     call_args = mock_plan_status.add_message.call_args
     assert "Failed to verify APT sources" in call_args.args[0]
     assert call_args.args[1] == cou_plan.MessageType.WARNING
+
+
+@patch("cou.steps.plan.PlanStatus")
+@patch("cou.steps.analyze.Analysis")
+@patch("cou.steps.plan.verify_apt_sources")
+def test_verify_apt_sources_exception_handled_no_force(
+    mock_verify_apt_sources, mock_analysis, mock_plan_status
+):
+    """Test _verify_apt_sources handles exceptions with --force not set."""
+    mock_verify_apt_sources.side_effect = Exception("connection failed")
+    mock_args = MagicMock(spec_set=CLIargs(command="plan"))()
+    mock_args.force = False
+    cou_plan._verify_apt_sources(mock_args, mock_analysis)
+    mock_plan_status.add_message.assert_called_once()
+    call_args = mock_plan_status.add_message.call_args
+    assert "Failed to verify APT sources" in call_args.args[0]
+    assert "--force" in call_args.args[0]
+    assert call_args.args[1] == cou_plan.MessageType.ERROR
 
 
 @patch("cou.steps.analyze.Analysis")

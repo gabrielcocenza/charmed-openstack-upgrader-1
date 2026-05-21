@@ -674,8 +674,11 @@ class Model(JubilantModelMixin):
         try:
             stdout = _juju.cli(*cli_args)
         except jubilant.CLIError as exc:
-            logger.warning("Failed to run '%s' on all machines: %s", command, exc)
-            return {}
+            logger.error("Failed to run '%s' on all machines: %s", command, exc)
+            raise CommandRunFailed(
+                cmd=command,
+                result={"return-code": exc.returncode, "stdout": exc.stdout, "stderr": exc.stderr},
+            ) from exc
 
         results: dict[str, Any] = json.loads(stdout) if stdout.strip() else {}
         return {
