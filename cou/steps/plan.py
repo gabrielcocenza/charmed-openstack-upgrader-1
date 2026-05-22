@@ -433,8 +433,10 @@ def _verify_apt_sources(args: CLIargs, analysis_result: Analysis) -> None:
 
     Check that all machines in the model only have expected APT sources configured
     (standard Ubuntu archives, Ubuntu Cloud Archive, or Landscape mirrors).
-    If unexpected sources are found and --force is not set, an error message
-    will be added to `PlanStatus`. If --force is set, a warning message will be added instead.
+    Machines where apt-cache policy could not be run are reported, and the user
+    is advised to check them manually. If unexpected sources or failures are found
+    and --force is not set, an error message will be added to `PlanStatus`. If
+    --force is set, a warning message will be added instead.
 
     :param args: CLI arguments
     :type args: CLIargs
@@ -442,28 +444,45 @@ def _verify_apt_sources(args: CLIargs, analysis_result: Analysis) -> None:
     :type analysis_result: Analysis
     """
     try:
-        unexpected_by_machine = verify_apt_sources(analysis_result.model)
+        result = verify_apt_sources(analysis_result.model)
     except Exception as e:  # pylint: disable=broad-exception-caught
-        message = f"Failed to verify APT sources on machines: {str(e)}"
+        message = f"Failed to verify APT sources: {str(e)}"
         logger.error(message)
         _report_verification_result(message, args.force)
         return
 
-    if not unexpected_by_machine:
+    sections: list[str] = []
+
+    if result.failed:
+        failed_details = "\n".join(
+            f"  - Machine {machine_id}: {error}"
+            for machine_id, error in sorted(result.failed.items())
+        )
+        sections.append(
+            "Failed to get apt-cache policy on the following machines. "
+            "It is advised to manually check apt-cache policy on these machines "
+            "before proceeding:\n"
+            f"{failed_details}"
+        )
+
+    if result.unexpected:
+        unexpected_details = "\n".join(
+            f"  - Machine {machine_id}: {', '.join(sorted(uris))}"
+            for machine_id, uris in sorted(result.unexpected.items())
+        )
+        sections.append(
+            "Unexpected APT sources found on machines. This may cause issues during the upgrade. "
+            "Only standard Ubuntu, Ubuntu Cloud Archive, and Landscape sources are expected.\n"
+            f"{unexpected_details}"
+        )
+
+    if not sections:
         logger.info(
             "Successfully verified APT sources on all machines, no unexpected sources found."
         )
         return
 
-    details = "\n".join(
-        f"  - Machine {machine_id}: {', '.join(sorted(uris))}"
-        for machine_id, uris in sorted(unexpected_by_machine.items())
-    )
-    message = (
-        "Unexpected APT sources found on machines. This may cause issues during the upgrade. "
-        "Only standard Ubuntu, Ubuntu Cloud Archive, and Landscape sources are expected.\n"
-        f"{details}"
-    )
+    message = "\n".join(sections)
     _report_verification_result(message, args.force)
 
 

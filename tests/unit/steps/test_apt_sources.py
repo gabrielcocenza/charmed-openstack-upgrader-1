@@ -13,8 +13,6 @@
 # limitations under the License.
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from cou.steps.apt_sources import (
     _get_allowed_host_patterns,
     find_unexpected_uris,
@@ -353,7 +351,8 @@ class TestVerifyAptSources:
             "1": self._make_task(stdout=APT_POLICY_CLEAN),
         }
         result = verify_apt_sources(model)
-        assert result == {}
+        assert result.unexpected == {}
+        assert result.failed == {}
 
     def test_machine_with_ppa(self):
         """Test that a machine with PPA is flagged."""
@@ -363,9 +362,9 @@ class TestVerifyAptSources:
             "1": self._make_task(stdout=APT_POLICY_WITH_PPA),
         }
         result = verify_apt_sources(model)
-        assert "1" in result
-        assert "http://ppa.launchpad.net/some-user/some-ppa/ubuntu" in result["1"]
-        assert "0" not in result
+        assert "1" in result.unexpected
+        assert "http://ppa.launchpad.net/some-user/some-ppa/ubuntu" in result.unexpected["1"]
+        assert "0" not in result.unexpected
 
     def test_machine_with_third_party(self):
         """Test that a machine with third-party repo is flagged."""
@@ -374,29 +373,26 @@ class TestVerifyAptSources:
             "0": self._make_task(stdout=APT_POLICY_WITH_THIRD_PARTY),
         }
         result = verify_apt_sources(model)
-        assert "0" in result
-        assert "https://packages.example.com/stable" in result["0"]
+        assert "0" in result.unexpected
+        assert "https://packages.example.com/stable" in result.unexpected["0"]
 
     def test_machine_failure_handled(self):
-        """Test that machine command failures raise CommandRunFailed."""
-        from cou.exceptions import CommandRunFailed
-
+        """Test that machine command failures are collected without aborting other machines."""
         model = MagicMock()
         model.run_on_all_machines.return_value = {
             "0": self._make_task(stdout=APT_POLICY_CLEAN),
             "1": self._make_task(
                 stdout="", stderr="connection refused", return_code=1, status="failed"
             ),
+            "2": self._make_task(stdout=APT_POLICY_WITH_PPA),
+            "3": self._make_task(stdout="", stderr="timeout", return_code=1, status="failed"),
         }
-        with pytest.raises(CommandRunFailed):
-            verify_apt_sources(model)
-
-    def test_no_results(self):
-        """Test handling when no results are returned."""
-        model = MagicMock()
-        model.run_on_all_machines.return_value = {}
         result = verify_apt_sources(model)
-        assert result == {}
+        assert result.failed == {"1": "connection refused", "3": "timeout"}
+        assert "2" in result.unexpected
+        assert "0" not in result.unexpected
+        assert "1" not in result.unexpected
+        assert "3" not in result.unexpected
 
     def test_country_mirror_clean(self):
         """Test that country mirrors are accepted."""
@@ -405,7 +401,7 @@ class TestVerifyAptSources:
             "0": self._make_task(stdout=APT_POLICY_WITH_COUNTRY_MIRROR),
         }
         result = verify_apt_sources(model)
-        assert result == {}
+        assert result.unexpected == {}
 
     def test_ports_clean(self):
         """Test that ports.ubuntu.com sources are accepted."""
@@ -414,7 +410,7 @@ class TestVerifyAptSources:
             "0": self._make_task(stdout=APT_POLICY_PORTS),
         }
         result = verify_apt_sources(model)
-        assert result == {}
+        assert result.unexpected == {}
 
     def test_esm_clean(self):
         """Test that esm.ubuntu.com sources are accepted."""
@@ -423,7 +419,7 @@ class TestVerifyAptSources:
             "0": self._make_task(stdout=APT_POLICY_ESM),
         }
         result = verify_apt_sources(model)
-        assert result == {}
+        assert result.unexpected == {}
 
     def test_cloud_archive_ppa_flagged(self):
         """Test that ubuntu-cloud-archive PPA is flagged by verify_apt_sources."""
@@ -432,9 +428,10 @@ class TestVerifyAptSources:
             "0": self._make_task(stdout=APT_POLICY_CLOUD_ARCHIVE_PPA),
         }
         result = verify_apt_sources(model)
-        assert "0" in result
+        assert "0" in result.unexpected
         assert (
-            "http://ppa.launchpadcontent.net/ubuntu-cloud-archive/antelope/ubuntu" in result["0"]
+            "http://ppa.launchpadcontent.net/ubuntu-cloud-archive/antelope/ubuntu"
+            in result.unexpected["0"]
         )
 
     @patch.dict("os.environ", {"LANDSCAPE_MIRROR_URI": "http://landscape.example.com/repository"})
@@ -445,7 +442,7 @@ class TestVerifyAptSources:
             "0": self._make_task(stdout=APT_POLICY_LANDSCAPE),
         }
         result = verify_apt_sources(model)
-        assert result == {}
+        assert result.unexpected == {}
 
     def test_landscape_mirror_unexpected_without_env(self):
         """Test that landscape mirror sources are flagged when env var is not set."""
@@ -454,8 +451,11 @@ class TestVerifyAptSources:
             "0": self._make_task(stdout=APT_POLICY_LANDSCAPE_MIRROR),
         }
         result = verify_apt_sources(model)
-        assert "0" in result
-        assert "https://repo.mirror.example.com/repository/standalone/ubuntu" in result["0"]
+        assert "0" in result.unexpected
+        assert (
+            "https://repo.mirror.example.com/repository/standalone/ubuntu"
+            in result.unexpected["0"]
+        )
 
     @patch.dict(
         "os.environ",
@@ -468,7 +468,7 @@ class TestVerifyAptSources:
             "0": self._make_task(stdout=APT_POLICY_LANDSCAPE_MIRROR),
         }
         result = verify_apt_sources(model)
-        assert result == {}
+        assert result.unexpected == {}
 
     def test_multiple_machines_mixed(self):
         """Test with multiple machines, some clean and some with issues."""
@@ -480,8 +480,8 @@ class TestVerifyAptSources:
             "3": self._make_task(stdout=APT_POLICY_CLEAN),
         }
         result = verify_apt_sources(model)
-        assert len(result) == 2
-        assert "1" in result
-        assert "2" in result
-        assert "0" not in result
-        assert "3" not in result
+        assert len(result.unexpected) == 2
+        assert "1" in result.unexpected
+        assert "2" in result.unexpected
+        assert "0" not in result.unexpected
+        assert "3" not in result.unexpected

@@ -15,9 +15,9 @@
 import logging
 import os
 import re
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from cou.exceptions import CommandRunFailed
 from cou.utils.juju_utils import Model
 
 logger = logging.getLogger(__name__)
@@ -102,37 +102,49 @@ def find_unexpected_uris(uris: set[str]) -> set[str]:
     return unexpected
 
 
-def verify_apt_sources(model: Model) -> dict[str, set[str]]:
+@dataclass
+class AptSourcesVerification:
+    """Result of verifying APT sources across all machines.
+
+    :param failed: Mapping of machine ID to error message for machines where
+        apt-cache policy could not be run.
+    :param unexpected: Mapping of machine ID to set of unexpected URIs for
+        machines that have non-standard APT sources.
+    """
+
+    failed: dict[str, str] = field(default_factory=dict)
+    unexpected: dict[str, set[str]] = field(default_factory=dict)
+
+
+def verify_apt_sources(model: Model) -> AptSourcesVerification:
     """Verify APT sources on all machines in the model.
 
     Runs `apt-cache policy` on all machines using juju exec --all,
     parses the output, and identifies any unexpected repository sources.
+    Machines that fail to return results are recorded but do not abort
+    the check on remaining machines.
 
     :param model: Juju model to check.
     :type model: Model
-    :return: Dictionary mapping machine identifiers to sets of unexpected URIs.
-        Only machines with unexpected sources are included.
-    :rtype: dict[str, set[str]]
+    :return: Verification result containing failed machines and machines with
+        unexpected sources.
+    :rtype: AptSourcesVerification
     """
     results = model.run_on_all_machines(APT_CACHE_POLICY_CMD, 30)
 
+    failed: dict[str, str] = {}
     unexpected_by_machine: dict[str, set[str]] = {}
     for machine_id, task in results.items():
         if not task.success:
+            error = task.stderr or task.message
             logger.error(
                 "Failed to run '%s' on machine %s: %s",
                 APT_CACHE_POLICY_CMD,
                 machine_id,
-                task.stderr or task.message,
+                error,
             )
-            raise CommandRunFailed(
-                cmd=APT_CACHE_POLICY_CMD,
-                result={
-                    "return-code": task.return_code,
-                    "stdout": task.stdout,
-                    "stderr": task.stderr,
-                },
-            )
+            failed[machine_id] = error
+            continue
 
         uris = parse_apt_policy_uris(task.stdout)
         unexpected = find_unexpected_uris(uris)
@@ -144,4 +156,4 @@ def verify_apt_sources(model: Model) -> dict[str, set[str]]:
             )
             unexpected_by_machine[machine_id] = unexpected
 
-    return unexpected_by_machine
+    return AptSourcesVerification(failed=failed, unexpected=unexpected_by_machine)
