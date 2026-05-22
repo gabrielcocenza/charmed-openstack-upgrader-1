@@ -674,11 +674,22 @@ class Model(JubilantModelMixin):
         try:
             stdout = _juju.cli(*cli_args)
         except jubilant.CLIError as exc:
-            logger.error("Failed to run '%s' on all machines: %s", command, exc)
-            raise CommandRunFailed(
-                cmd=command,
-                result={"return-code": exc.returncode, "stdout": exc.stdout, "stderr": exc.stderr},
-            ) from exc
+            # juju exec exits non-zero when any individual machine task fails,
+            # but stdout still contains the full JSON with per-machine results.
+            # Parse it so callers can handle individual machine failures gracefully.
+            # Only raise if stdout is empty, which indicates juju itself failed
+            # (e.g. network error, model not found) rather than a per-task failure.
+            if not exc.stdout or not exc.stdout.strip():
+                logger.error("Failed to run '%s' on all machines: %s", command, exc)
+                raise CommandRunFailed(
+                    cmd=command,
+                    result={
+                        "return-code": exc.returncode,
+                        "stdout": exc.stdout,
+                        "stderr": exc.stderr,
+                    },
+                ) from exc
+            stdout = exc.stdout
 
         results: dict[str, Any] = json.loads(stdout) if stdout.strip() else {}
         return {
